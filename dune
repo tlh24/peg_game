@@ -1,0 +1,3 @@
+(executable
+ (name peg_game)
+ (libraries bigarray core core_unix core_kernel.pairing_heap))
