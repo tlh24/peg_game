@@ -450,44 +450,67 @@ let solve_puzzle_main (initial_grid_param: grid_t) : path option =
 
 (* --- Main Execution --- *)
 let () =
-  let puzzle_file = "puzzl.txt" in
-  (match Stdlib.Sys.file_exists puzzle_file with
-    | true -> ()
-    | _ ->
-      Printf.printf "'%s' not found. Creating default.\n" puzzle_file;
-      let default_content =
-        ".11111.1111111\n.11.11111.1111\n.111111.1.11.1\n1.1111111.111.\n"
-        ^ "11.11.1.1..111\n..111.11111111\n.111..1...111.\n.111111111.111\n.1.11111.11111\n" in
-      Out_channel.write_all puzzle_file ~data:default_content;
-  );
+  (* Check for command-line argument *)
+  if Array.length (Sys.get_argv ()) <> 2 then begin
+    Printf.eprintf "Usage: %s <puzzle_file_path>\n" (Sys.get_argv()).(0);
+    Stdlib.exit 1 (* Exit with error code *)
+  end;
+
+  let puzzle_file = (Sys.get_argv()).(1) in
+
+  (* Check if the provided puzzle file exists *)
+  if not (Stdlib.Sys.file_exists puzzle_file) then begin
+    Printf.eprintf "Error: Puzzle file '%s' not found.\n" puzzle_file;
+    Stdlib.exit 1
+  end;
 
   match parse_grid_from_file puzzle_file with
-  | None -> Printf.eprintf "Failed to parse puzzle.\n"
+  | None ->
+      Printf.eprintf "Failed to parse puzzle from '%s'. Please check the file format.\n" puzzle_file;
+      Stdlib.exit 1
   | Some initial_grid ->
       let initial_ones = count_active_ones initial_grid in
 
+      (* Initial display - moved here to happen only after successful parse *)
+      Printf.printf "\027[2J\027[H"; (* Clear screen *)
+      print_grid_ocaml ~message:(Some "Initial Puzzle State:") initial_grid;
+      Printf.printf "Total active '1's to clear: %d\n" initial_ones;
+      Printf.printf "\n--- Info ---\nStrategy: Priority Queue Branching\n";
+      Printf.printf "----------------------\n\nStarting Solver...\n";
+      Out_channel.flush stdout;
+      (* If you want a small pause before solver starts: *)
+      (* ignore (Core_unix.nanosleep 1.0); *)
+
+
       let final_solution_path_opt =
-        try solve_puzzle_main initial_grid
+        try
+          (* Pass initial_ones to the solver if it needs it,
+             otherwise it can recalculate or you can remove it from solve_puzzle_main's signature *)
+          solve_puzzle_main initial_grid (* Assuming solve_puzzle_main can get initial_ones if needed or doesn't use it directly *)
         with
-        (*| Sys_unix.Break -> Printf.printf "\n\nSearch interrupted.\n"; None*)
-        | e -> Printf.eprintf "\n\nError: %s\n%s\n" (Exn.to_string e) (Printexc.get_backtrace ()); None
+        | e ->
+            Printf.eprintf "\n\nSolver Error: %s\n" (Exn.to_string e);
+            Printf.eprintf "Backtrace:\n%s\n" (Printexc.get_backtrace ());
+            None
       in
 
       match final_solution_path_opt with
       | Some final_path ->
           Printf.printf "\n--- Optimal Solution Found ---\n";
-          if List.is_empty final_path && initial_ones > 0 then Printf.printf "Error: No path found.\n"
+          if List.is_empty final_path && initial_ones > 0 then
+            Printf.printf "Error: No path found, but puzzle was not initially solved.\n"
           else if List.is_empty final_path && initial_ones = 0 then
              (print_grid_ocaml ~message:(Some "Final Solved State (0 moves):") initial_grid;
-              Printf.printf "\nOptimal solution: 0 moves.\n")
+              Printf.printf "\nOptimal solution: 0 moves (puzzle was already solved).\n")
           else
             let final_reconstructed_grid = ref (copy_grid initial_grid) in
             List.iter final_path ~f:(fun move ->
               let (next_g, _) = apply_move !final_reconstructed_grid move in
               final_reconstructed_grid := next_g);
             print_grid_ocaml ~message:(Some (Printf.sprintf "Final Solved State (Optimal: %d moves):" (List.length final_path))) !final_reconstructed_grid;
-            Printf.printf "\nOptimal solution: %d moves.\nSequence:\n" (List.length final_path);
+            Printf.printf "\nOptimal solution: %d moves.\nSequence of moves (Type, Row, Column):\n" (List.length final_path);
             List.iteri final_path ~f:(fun i move ->
               let type_char = match move.move_type with MoveX -> 'X' | MoveC -> 'C' in
               Printf.printf "  %d. %c at (%d, %d)\n" (i+1) type_char move.r move.c)
-      | None -> Printf.printf "\nSolver finished: No solution or error.\n"
+      | None ->
+          Printf.printf "\nSolver finished: No solution was found, or search was interrupted/encountered an error.\n"
