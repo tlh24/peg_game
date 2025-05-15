@@ -59,6 +59,11 @@ let global_state = object
   method get_next_node_id () = node_id_counter <- node_id_counter + 1; node_id_counter
   method set_initial_grid_for_display g = initial_grid_for_display <- Some g
   method get_initial_grid_for_display = initial_grid_for_display
+
+  val mutable visited_states : (string, int) Caml.Hashtbl.t = Caml.Hashtbl.create 50000 (* grid_string -> min_depth *)
+  method add_visited grid_str depth = Caml.Hashtbl.replace visited_states grid_str depth
+  method find_visited_depth grid_str = Caml.Hashtbl.find_opt visited_states grid_str
+
   method reset () =
     min_moves_overall <- Int.max_value;
     best_path_overall <- None;
@@ -69,6 +74,16 @@ end
 
 (* --- Grid Operations --- *)
 let get_grid_dims grid = (Bigarray.Array2.dim1 grid, Bigarray.Array2.dim2 grid)
+
+let string_of_grid grid = (* Used for visited set key *)
+  let rows, cols = get_grid_dims grid in
+  let s = Bytes.create (rows * cols) in
+  for r = 0 to rows - 1 do
+    for c = 0 to cols - 1 do
+      Bytes.set s (r * cols + c) grid.{r,c} (* Bigarray syntax *)
+    done
+  done;
+  Bytes.to_string s
 
 let copy_grid grid:grid_t =
   let new_grid = Bigarray.Array2.create Bigarray.char Bigarray.c_layout
@@ -356,13 +371,21 @@ let rec rollout_from_node (start_node: tree_node)
     | greedy_action :: _ ->
         let move = greedy_action.move in
         let next_grid, _ = apply_move start_node.grid_state move in
+        let next_grid_str = string_of_grid next_grid in
         let next_depth = start_node.depth + 1 in
         let next_path = start_node.path_from_root @ [move] in
 
-        let child = make_tree_node next_grid next_path next_depth in
-        start_node.children <- (move, child) :: start_node.children;
-        add_node_alternatives_to_pq child frontier_pq;
-        rollout_from_node child frontier_pq phase_prefix (* Tail call if OCaml optimizes this context *)
+        match global_state#find_visited_depth next_grid_str with
+        | Some visited_depth when visited_depth <= next_depth ->
+            (* This grid state was already reached by a shorter or equal path. Prune. *)
+            (* In rollout, this means 'break' the rollout for this path *)
+            (start_node, false) (* Or however you signal pruning/end of this path segment *)
+        | _ -> (* New state or found a shorter path to it *)
+            global_state#add_visited next_grid_str next_depth;
+            let child = make_tree_node next_grid next_path next_depth in
+            start_node.children <- (move, child) :: start_node.children;
+            add_node_alternatives_to_pq child frontier_pq;
+            rollout_from_node child frontier_pq phase_prefix (* Tail call if OCaml optimizes this context *)
   end
 
 let solve_puzzle_main (initial_grid_param: grid_t) : path option =
@@ -389,8 +412,6 @@ let solve_puzzle_main (initial_grid_param: grid_t) : path option =
     | Some pq_entry ->
         let { parent_node = branch_parent; alt_idx; _ } = pq_entry in
 
-        (*branch_parent.next_alt_idx_to_explore <- alt_idx + 1;*) (* don't need this, managed by the pq.  game is *ordered* so won't revisit *)
-
         if Option.is_none branch_parent.potential_actions then (
           Printf.printf "Error: branch_parent.potential_actions empty!\n"
         );
@@ -407,14 +428,20 @@ let solve_puzzle_main (initial_grid_param: grid_t) : path option =
                                 phase_msg ~focus_coord:(move_info.r, move_info.c);
 
           let next_grid, _ = apply_move branch_parent.grid_state move_info in
+          let next_grid_str = string_of_grid next_grid in
           let next_depth = branch_parent.depth + 1 in
           let next_path = branch_parent.path_from_root @ [move_info] in
 
-
-          let branch_child_node = make_tree_node next_grid next_path next_depth in
-          branch_parent.children <- (move_info, branch_child_node) :: branch_parent.children;
-          add_node_alternatives_to_pq branch_child_node exploration_frontier_pq;
-          ignore( rollout_from_node branch_child_node exploration_frontier_pq
+          match global_state#find_visited_depth next_grid_str with
+          | Some visited_depth when visited_depth <= next_depth ->
+            (* This grid state was already reached by a shorter or equal path. Prune. *)
+            ()
+          | _ ->
+            global_state#add_visited next_grid_str next_depth;
+            let branch_child_node = make_tree_node next_grid next_path next_depth in
+            branch_parent.children <- (move_info, branch_child_node) :: branch_parent.children;
+            add_node_alternatives_to_pq branch_child_node exploration_frontier_pq;
+            ignore( rollout_from_node branch_child_node exploration_frontier_pq
                                     (Printf.sprintf "Rollout Post-Branch N%d-A%d" branch_parent.id alt_idx) ) ;
 
       );
