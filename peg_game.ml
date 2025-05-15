@@ -1,5 +1,4 @@
 open Core
-(*open Pairing_heap*)
 
 (* --- Core Types --- *)
 
@@ -27,7 +26,6 @@ type tree_node = {
   grid_state : grid_t;
   path_from_root : path;
   depth : int;
-  (*parent : tree_node option;*) (* never used! *)
   mutable children : (move_info * tree_node) list;
   mutable potential_actions : action_details list option;
   is_solved_state : bool;
@@ -116,7 +114,7 @@ let parse_grid_from_file filename : grid_t option =
                 | _ as c -> if Char.is_whitespace c then cell_empty (* Handle potential trailing spaces if lines are not perfectly stripped*)
                             else failwith ("Invalid character in puzzle: " ^ String.make 1 c)
               in
-              arr.{r,c} <- cell_char (* Bigarray syntax *)
+              arr.{r,c} <- cell_char
             )
           );
           Some arr
@@ -144,10 +142,10 @@ let print_grid_ocaml ?(highlight_pos: (int * int) option = None) ?(message: stri
 
 let is_one x = Char.compare x cell_one = 0
 let isnt_one x = Char.compare x cell_one <> 0
-let is_empty x = Char.compare x cell_empty = 0
+(*let is_empty x = Char.compare x cell_empty = 0
 let is_cross x = Char.compare x cell_cross = 0
 let is_circle x = Char.compare x cell_circle = 0
-let is_zeroed x = Char.compare x cell_zeroed_one = 0
+let is_zeroed x = Char.compare x cell_zeroed_one = 0*)
 
 let count_active_ones (grid:grid_t) : int =
   let rows, cols = get_grid_dims grid in
@@ -175,28 +173,28 @@ let apply_cross_to_grid (grid_in: grid_t) (r_move: int) (c_move: int) : (grid_t 
     (try for c = c_move + 1 to cols - 1 do
         match grid.{r_move,c} with
         | cc when is_one cc -> grid.{r_move,c} <- cell_zeroed_one; incr cleared_count
-        | cc when is_empty cc || is_cross cc || is_circle cc || is_zeroed cc -> raise Exit
+        | cc when isnt_one cc -> raise Exit
         | _ -> raise Exit (* Should not happen if grid only contains valid chars *)
     done with Exit -> ());
     (* Horizontal left *)
     (try for c = c_move - 1 downto 0 do
         match grid.{r_move,c} with
         | cc when is_one cc -> grid.{r_move,c} <- cell_zeroed_one; incr cleared_count
-        | cc when is_empty cc || is_cross cc || is_circle cc || is_zeroed cc -> raise Exit
+        | cc when isnt_one cc -> raise Exit
         | _ -> raise Exit
     done with Exit -> ());
     (* Vertical down *)
     (try for r = r_move + 1 to rows - 1 do
         match grid.{r,c_move} with
         | cc when is_one cc -> grid.{r,c_move} <- cell_zeroed_one; incr cleared_count
-        | cc when is_empty cc || is_cross cc || is_circle cc || is_zeroed cc -> raise Exit
+        | cc when isnt_one cc -> raise Exit
         | _ -> raise Exit
     done with Exit -> ());
     (* Vertical up *)
     (try for r = r_move - 1 downto 0 do
         match grid.{r,c_move} with
         | cc when is_one cc -> grid.{r,c_move} <- cell_zeroed_one; incr cleared_count
-        | cc when is_empty cc || is_cross cc || is_circle cc || is_zeroed cc -> raise Exit
+        | cc when isnt_one cc -> raise Exit
         | _ -> raise Exit
     done with Exit -> ());
     (grid, !cleared_count)
@@ -467,12 +465,6 @@ let () =
   | None -> Printf.eprintf "Failed to parse puzzle.\n"
   | Some initial_grid ->
       let initial_ones = count_active_ones initial_grid in
-      Printf.printf "\027[2J\027[H";
-      print_grid_ocaml ~message:(Some "Initial Puzzle State:") initial_grid;
-      Printf.printf "Total active '1's to clear: %d\n" initial_ones;
-      Printf.printf "\n--- Info ---\nStrategy: Priority Queue Branching\n";
-      Printf.printf "----------------------\n\nStarting Solver...\n";
-      Out_channel.flush stdout;
 
       let final_solution_path_opt =
         try solve_puzzle_main initial_grid
